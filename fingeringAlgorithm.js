@@ -1,74 +1,84 @@
 // lib/fingeringAlgorithm.js
 
-// Accordage standard de la guitare (Mi, La, Ré, Sol, Si, Mi) en valeurs MIDI
-// Corde 0 = Mi grave (Low E), Corde 5 = Mi aigu (High e)
 const TUNING = [40, 45, 50, 55, 59, 64]; 
-const MAX_FRET = 22; // On limite à un manche de 22 cases
+const MAX_FRET = 22;
 
-// 1. Trouver toutes les positions (Corde + Case) pour une note MIDI
-function getPossiblePositions(midiNote) {
-  let positions = [];
+function getPossibleStates(midiNote) {
+  let states = [];
   for (let string = 0; string < TUNING.length; string++) {
     const fret = midiNote - TUNING[string];
     if (fret >= 0 && fret <= MAX_FRET) {
-      positions.push({ string, fret });
+      if (fret === 0) {
+        states.push({ string, fret, finger: 0 }); // Corde à vide = aucun doigt
+      } else {
+        for (let finger = 1; finger <= 4; finger++) {
+          states.push({ string, fret, finger });
+        }
+      }
     }
   }
-  return positions;
+  return states;
 }
 
-// 2. Calculer le coût de déplacement entre deux positions
-function getTransitionCost(pos1, pos2) {
-  // Différence de case (le plus fatiguant/difficile)
-  const fretDiff = Math.abs(pos2.fret - pos1.fret);
-  
-  // Différence de corde
-  const stringDiff = Math.abs(pos2.string - pos1.string);
+function getTransitionCost(s1, s2) {
+  let cost = 0;
 
-  // Pénalité de changement de position (démanché)
-  // Si on reste dans une zone de 3-4 cases, c'est facile. Au-delà, c'est un saut.
-  let positionShiftPenalty = 0;
-  if (fretDiff > 4 && pos1.fret !== 0 && pos2.fret !== 0) {
-    positionShiftPenalty = fretDiff * 5; // Pénalité lourde pour les grands sauts
+  // 1. Coût de changement de corde
+  cost += Math.abs(s2.string - s1.string);
+
+  // 2. Gestion de la main gauche (La "Position")
+  // On estime la position de la main par : Case - Doigt + 1
+  // Exemple : Case 7 avec doigt 3 (annulaire) -> Position 5
+  const pos1 = s1.fret === 0 ? null : s1.fret - s1.finger + 1;
+  const pos2 = s2.fret === 0 ? null : s2.fret - s2.finger + 1;
+
+  if (pos1 !== null && pos2 !== null) {
+    if (pos1 !== pos2) {
+      cost += Math.abs(pos2 - pos1) * 10; // Grosse pénalité si la main doit glisser (démanché)
+    }
   }
 
-  // Les cordes à vide (case 0) coûtent moins cher à atteindre
-  let openStringBonus = (pos2.fret === 0) ? -2 : 0;
+  // 3. Ergonomie des doigts
+  if (s1.fret !== 0 && s2.fret !== 0) {
+    const fretDiff = s2.fret - s1.fret;
+    const fingerDiff = s2.finger - s1.finger;
 
-  return (fretDiff * 2) + stringDiff + positionShiftPenalty + openStringBonus;
+    // Erreur fatale : Doigt 1 sur case 8 et Doigt 4 sur case 5 (doigts croisés à l'envers)
+    if ((fretDiff > 0 && fingerDiff < 0) || (fretDiff < 0 && fingerDiff > 0)) {
+      cost += 100;
+    }
+    
+    // Écartement naturel : si l'écart de case est différent de l'écart de doigt
+    cost += Math.abs(fretDiff - fingerDiff) * 2;
+  }
+
+  // 4. Bonus pour cordes à vide (facilité)
+  if (s2.fret === 0) cost -= 2;
+
+  return cost;
 }
 
-// 3. Algorithme de Viterbi pour le chemin optimal
-export function calculateGuitarTab(midiNotes) {
+export function calculateGuitarFingering(midiNotes) {
   if (midiNotes.length === 0) return [];
 
-  // Obtenir les positions possibles pour chaque note de la mélodie
-  const sequencePositions = midiNotes.map(note => getPossiblePositions(note));
+  const sequenceStates = midiNotes.map(note => getPossibleStates(note));
   
-  // Si une note est hors de portée de la guitare, on l'ignore (ou on plante)
-  if (sequencePositions.some(positions => positions.length === 0)) {
-    throw new Error("Certaines notes sont injouables sur une guitare standard.");
-  }
+  let dp = [sequenceStates[0].map(() => 0)];
+  let path = [sequenceStates[0].map(() => -1)];
 
-  let dp = [sequencePositions[0].map(() => 0)]; // Coûts initiaux à 0
-  let path = [sequencePositions[0].map(() => -1)];
-
-  // Remplissage du tableau des coûts
-  for (let i = 1; i < sequencePositions.length; i++) {
-    const currentPositions = sequencePositions[i];
-    const prevPositions = sequencePositions[i - 1];
-    
+  for (let i = 1; i < sequenceStates.length; i++) {
+    const currentStates = sequenceStates[i];
+    const prevStates = sequenceStates[i - 1];
     let currentCosts = [];
     let currentPaths = [];
 
-    for (let j = 0; j < currentPositions.length; j++) {
+    for (let j = 0; j < currentStates.length; j++) {
       let minCost = Infinity;
       let bestPrevIndex = -1;
 
-      for (let k = 0; k < prevPositions.length; k++) {
-        const cost = getTransitionCost(prevPositions[k], currentPositions[j]);
+      for (let k = 0; k < prevStates.length; k++) {
+        const cost = getTransitionCost(prevStates[k], currentStates[j]);
         const totalCost = dp[i - 1][k] + cost;
-
         if (totalCost < minCost) {
           minCost = totalCost;
           bestPrevIndex = k;
@@ -81,16 +91,12 @@ export function calculateGuitarTab(midiNotes) {
     path.push(currentPaths);
   }
 
-  // Retrouver le chemin optimal
   let optimalPath = [];
-  let minFinalCost = Math.min(...dp[sequencePositions.length - 1]);
-  let lastIndex = dp[sequencePositions.length - 1].indexOf(minFinalCost);
+  let lastIndex = dp[midiNotes.length - 1].indexOf(Math.min(...dp[midiNotes.length - 1]));
 
-  optimalPath.unshift(sequencePositions[sequencePositions.length - 1][lastIndex]);
-
-  for (let i = sequencePositions.length - 1; i > 0; i--) {
+  for (let i = midiNotes.length - 1; i >= 0; i--) {
+    optimalPath.unshift(sequenceStates[i][lastIndex]);
     lastIndex = path[i][lastIndex];
-    optimalPath.unshift(sequencePositions[i - 1][lastIndex]);
   }
 
   return optimalPath;
