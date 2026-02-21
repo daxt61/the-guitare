@@ -1,88 +1,63 @@
 // app/page.js
 'use client';
-
 import { useState } from 'react';
 import { Midi } from '@tonejs/midi';
-import { calculateGuitarTab } from '../lib/fingeringAlgorithm';
+import { calculateGuitarFingering } from '../lib/fingeringAlgorithm';
 
 export default function Home() {
   const [results, setResults] = useState([]);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Noms des cordes pour un affichage plus lisible
-  const stringNames = ["Mi grave (E)", "La (A)", "Ré (D)", "Sol (G)", "Si (B)", "Mi aigu (e)"];
+  const stringNames = ["Mi grave", "La", "Ré", "Sol", "Si", "Mi aigu"];
+  const fingerNames = ["À vide", "Index (1)", "Majeur (2)", "Annulaire (3)", "Auriculaire (4)"];
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
     setLoading(true);
-    setError("");
-    setResults([]);
     
     const reader = new FileReader();
-
     reader.onload = async (e) => {
       try {
         const midiData = new Midi(e.target.result);
-        const track = midiData.tracks[0]; 
+        const notes = midiData.tracks[0].notes;
+        const res = calculateGuitarFingering(notes.map(n => n.midi));
         
-        if (!track || track.notes.length === 0) {
-          setError("Aucune note trouvée dans ce fichier MIDI.");
-          setLoading(false);
-          return;
-        }
-
-        const midiNotes = track.notes.map(n => n.midi);
-        const noteNames = track.notes.map(n => n.name);
-        
-        // Calcul du chemin optimal sur le manche
-        const optimalPositions = calculateGuitarTab(midiNotes);
-
-        const finalOutput = noteNames.map((name, index) => ({
-          note: name,
-          string: stringNames[optimalPositions[index].string],
-          fret: optimalPositions[index].fret
-        }));
-
-        setResults(finalOutput);
+        setResults(res.map((step, i) => ({
+          note: notes[i].name,
+          ...step
+        })));
       } catch (err) {
-        console.error(err);
-        setError("Erreur : le fichier contient des notes trop graves ou trop aiguës pour une guitare standard.");
+        alert("Erreur de calcul. Vérifie ton fichier MIDI.");
       }
       setLoading(false);
     };
-
     reader.readAsArrayBuffer(file);
   };
 
   return (
-    <main style={{ maxWidth: '700px', margin: '50px auto', fontFamily: 'sans-serif', textAlign: 'center' }}>
-      <h1>Générateur de Tablature Optimale 🎸</h1>
-      <p>Uploade un fichier MIDI monophonique (mélodie simple) pour trouver sur quelles cordes et quelles cases jouer pour bouger le moins possible sur le manche.</p>
-      
-      <div style={{ margin: '30px 0', padding: '20px', border: '2px dashed #ccc', borderRadius: '10px' }}>
-        <input type="file" accept=".mid,.midi" onChange={handleFileUpload} />
-      </div>
+    <main style={{ padding: '40px', fontFamily: 'system-ui', backgroundColor: '#f0f2f5', minHeight: '100vh' }}>
+      <div style={{ maxWidth: '800px', margin: '0 auto', backgroundColor: 'white', padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+        <h1 style={{ color: '#1a202c' }}>Optimiseur de Doigtés Guitare 🎸</h1>
+        <p style={{ color: '#4a5568' }}>Trouve le chemin le plus ergonomique pour ta main gauche.</p>
+        
+        <input type="file" onChange={handleFileUpload} style={{ margin: '20px 0', padding: '10px' }} />
 
-      {loading && <p>Calcul en cours...</p>}
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+        {loading && <p>Analyse du manche en cours...</p>}
 
-      {results.length > 0 && (
-        <div style={{ textAlign: 'left', background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
-          <h2>Chemin recommandé sur le manche :</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-            {results.map((res, i) => (
-              <div key={i} style={{ border: '1px solid #ddd', padding: '15px', background: 'white', borderRadius: '5px', textAlign: 'center', minWidth: '100px' }}>
-                <div style={{ fontWeight: 'bold', fontSize: '1.2em', marginBottom: '5px' }}>{res.note}</div>
-                <div style={{ color: '#d97706' }}>Corde : {res.string}</div>
-                <div style={{ color: '#2563eb', fontWeight: 'bold' }}>Case : {res.fret}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '15px', marginTop: '30px' }}>
+          {results.map((r, i) => (
+            <div key={i} style={{ padding: '15px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: r.fret === 0 ? '#fffaf0' : 'white' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{r.note}</div>
+              <div style={{ fontSize: '0.9rem', color: '#718096' }}>{stringNames[r.string]}</div>
+              <div style={{ margin: '8px 0', fontWeight: 'bold', color: '#2b6cb0' }}>Case {r.fret}</div>
+              <div style={{ fontSize: '0.85rem', color: '#2f855a', fontWeight: '600' }}>
+                ✋ {fingerNames[r.finger]}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </main>
   );
 }
